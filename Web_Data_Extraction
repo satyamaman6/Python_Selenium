@@ -1,0 +1,142 @@
+#https://www.tdscpc.gov.in/app/login.xhtml
+
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+
+import time
+import pandas as pd
+from tkinter import simpledialog, messagebox
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+
+# Initialize ChromeDriver
+driver = webdriver.Chrome(service=Service(r'C:\Program Files\chromedriver-win64\chromedriver.exe'))
+driver.get('https://www.tdscpc.gov.in/app/login.xhtml?usr=Ded')
+
+# File path and sheets
+file_path = r"C:\Users\Admin\Desktop\Selenium Workflow\Aadhar Card selenium\PAN.xlsx"
+Sheet_name = "Credential"
+PAN_Sheet = "Sheet1"
+
+# Read Excel
+credentials_df = pd.read_excel(file_path, sheet_name=Sheet_name)
+Sheet_1_df = pd.read_excel(file_path, sheet_name=PAN_Sheet)
+
+# Get credentials
+username = credentials_df['Username'].iloc[0]
+password = credentials_df['Password'].iloc[0]
+tan = credentials_df['TAN NO'].iloc[0]
+
+try:
+    while True:
+        # Login process
+        WebDriverWait(driver, 5).until(EC.presence_of_element_located((By.NAME, 'username'))).send_keys(username)
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.NAME, 'j_password'))).send_keys(password)
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.NAME, 'j_tanPan'))).send_keys(tan)
+
+        # CAPTCHA handling
+        attempts = 0
+        while attempts < 3:
+            captcha_value = simpledialog.askstring("CAPTCHA Input", "Please enter the CAPTCHA below:")
+            if captcha_value:
+                break
+            attempts += 1
+            messagebox.showwarning("No Input", f"You need to enter a CAPTCHA. {3 - attempts} attempts left.")
+
+        if attempts == 3:
+            messagebox.showerror("Error", "Maximum CAPTCHA attempts reached.")
+            driver.quit()
+            exit()
+
+        WebDriverWait(driver, 7).until(EC.presence_of_element_located((By.NAME, 'j_captcha'))).send_keys(captcha_value)
+        WebDriverWait(driver, 8).until(EC.presence_of_element_located(
+            (By.XPATH, '/html/body/div[1]/form/div[2]/div[2]/div[2]/div[2]/div[12]/p[2]/input'))).click()
+
+        # Check for login success
+        WebDriverWait(driver, 1).until(
+            EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/form/div[2]/div[2]/div[2]/div[2]/p/span')))
+        messagebox.showerror("Incorrect Captcha", "Captcha Text Not Valid.")
+        continue
+
+except Exception as e:
+    print(f"An error occurred: {e}")
+
+finally:
+    messagebox.showinfo("Info", "Login Successful")
+
+    try:
+        # Navigate to PAN Verification
+        WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, '//*[@id="cssdropdown"]/li[2]/div/a/span[2]'))).click()
+
+        WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.XPATH, '//*[@id="cssdropdown"]/li[2]/ul/li[5]/a'))).click()
+
+        workbook = load_workbook(file_path)
+        sheet = workbook[PAN_Sheet]
+
+        # Process PAN numbers
+        for index, row in Sheet_1_df.iterrows():
+            PAN_N = row['PAN']
+            if pd.isna(PAN_N) or PAN_N == "":
+                continue
+
+            WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.NAME, 'pannumber'))).clear()
+            WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.NAME, 'pannumber'))).send_keys(PAN_N)
+
+            WebDriverWait(driver, 3).until(EC.presence_of_element_located(
+                (By.XPATH, '/html/body/div[1]/div[4]/form[1]/div/div/table/tbody/tr[5]/td/table/tbody/tr/td[4]/select/option[2]'))).click()
+            WebDriverWait(driver, 3).until(EC.element_to_be_clickable(
+                (By.XPATH, '/html/body/div[1]/div[4]/form[1]/div/div/table/tbody/tr[5]/td/table/tbody/tr/td[5]/input'))).click()
+
+            # Extract Status and HolderName
+            status = WebDriverWait(driver, 3).until(
+                EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[4]/div[4]/table/tbody/tr/td[1]'))
+            ).text
+            holder_name = WebDriverWait(driver, 3).until(
+                EC.presence_of_element_located((By.XPATH, '/html/body/div[1]/div[4]/div[4]/table/tbody/tr/td[2]'))
+            ).text
+
+            # Handle blank values
+            status = status if status.strip() else "Invalid"
+            holder_name = holder_name if holder_name.strip() else "Invalid/Not Available"
+
+            # Write to Excel and apply colors
+            sheet.cell(row=index + 2, column=Sheet_1_df.columns.get_loc('Status') + 1, value=status)
+            sheet.cell(row=index + 2, column=Sheet_1_df.columns.get_loc('HolderName') + 1, value=holder_name)
+
+            if status == "Valid and Operative":
+                fill = PatternFill(start_color="00FF00", fill_type="solid")  # Green
+            elif status == "Valid and Inoperative":
+                fill = PatternFill(start_color="FF0000", fill_type="solid")  # Red
+            elif status == "Active":
+                fill = PatternFill(start_color="ADD8E6", fill_type="solid")  # Light Blue
+            elif status in ["Invalid", "Invalid/Not Available"]:
+                fill = PatternFill(start_color="D3D3D3", fill_type="solid")  # Light Gray
+            else:
+                fill = PatternFill(start_color="FFFFFF", fill_type="solid")  # Default white
+
+            sheet.cell(row=index + 2, column=Sheet_1_df.columns.get_loc('Status') + 1).fill = fill
+
+    except Exception as e:
+        print(f"An error occurred while processing PAN details: {e}")
+    finally:
+        workbook.save(file_path)
+
+    time.sleep(10)
+    driver.quit()
+
+
+# In[ ]:
+
+
+
+
