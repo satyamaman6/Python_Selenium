@@ -1,3 +1,4 @@
+#here we need to udpate the correct web driver aloigned with broswer version
 #https://www.tdscpc.gov.in/app/login.xhtml
 
 #!/usr/bin/env python
